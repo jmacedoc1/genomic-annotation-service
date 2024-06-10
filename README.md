@@ -1,4 +1,10 @@
+# Introduction
+
+Genomic annotation service that allows users to annotate files using AWS.
+
+
 # gas-framework
+
 An enhanced web framework (based on [Flask](http://flask.pocoo.org/)) for use in a "Cloud Computing" course capstone project. Adds robust user authentication (via [Globus Auth](https://docs.globus.org/api/auth)), modular templates, and some simple styling based on [Bootstrap](http://getbootstrap.com/).
 
 Directory contents are as follows:
@@ -7,11 +13,23 @@ Directory contents are as follows:
 * `/util` - Utility scripts for notifications, archival, and restoration
 * `/aws` - AWS user data files
 
+## Annotation process
+
+1. User selects an input file which is uploaded to S3 via a signed POST request.
+2. S3 sends a request to the redirect URL in our web app.
+3. The web app posts a notification message with the request data to the SNS topic.
+4. The SQS queue receives the notification and persists a message containing the request.
+5. The annotator reads the message from the SQS queue.
+6. The annotator extracts the input file name from the message and downloads it from S3.
+7. The annotator updates the job’s status in the database and spawns the annotation.
+8. The annotator copies the result and log files to S3.
+9. The annotator again updates the job’s status in the database.
+
 ## Archive process
 
 1. When we finish an annotation job and set the `job_status` to "COMPLETED", we send a message to the `josemaria_glacier` SNS topic. We also have a SQS queue with the same name that's subscribed to this SNS topic.
 
-3. The `archive.py` file is running on a tmux session. This file handles the logic or archiving the files of free users:
+2. The `archive.py` file is running on a tmux session. This file handles the logic or archiving the files of free users:
 
    a. First, it dequeues the messages in `josemaria_glacier` SQS queue and extracts the neccesary keys from the message, like the job's `complete_time`.  
    b. We use the `complete_time` to estimate when we have to archive the file in Glacier (`free_user_time_limit` variable).  
@@ -28,7 +46,7 @@ Directory contents are as follows:
    b. Once we have the list of archived jobs we iterate over them to send a message to our `josemaria_restore` SNS topic with our `results_file_archive_id` and `s3_key_result_file`.  
    c. We also update the user's profile in our `josemaria_annotations` table.
 
-3. In the `restore.py` script we:  
+2. In the `restore.py` script we:  
 
    a. Dequeue the messages in `josemaria_restore` SQS queue and extract the neccesary keys from the message, like the archive ID and the key of the archived results file.  
    b. We then initiate a job for an "Expedited" archive retrieval. In case it fails, we initiate a job for a "Standard" archive retrieval. In the `Description`of the job parameters we send the `s3_key_result_file` so we're able to upload the file later in the S3 results bucket with that key (during the thaw process). We also set the `SNSTopic` parameter to our `josemaria_thaw` SNS topic so it gets a message with the archive ID once it finishes retrieving the job.  
